@@ -3,393 +3,44 @@
 module interest_protocol::interface {
   use std::vector;
 
-  use sui::coin::{Coin, CoinMetadata};
+  use sui::coin::{Coin};
   use sui::tx_context::{Self, TxContext};
   use sui::transfer;
   use sui::clock::{Self, Clock};
-  use sui::object::{ID};
 
-  use interest_protocol::dex::{Self, DEXStorage, LPCoin};
-  use interest_protocol::master_chef::{Self, MasterChefStorage, AccountStorage as MasterChefAccountStorage};
+  use interest_protocol::master_chef::{Self, MasterChefStorage, AccountStorage as MasterChefAccountStorage,MasterChefBalanceStorage};
   use interest_protocol::ipx::{Self, IPXStorage, IPX};
-  use interest_protocol::utils::{handle_coin_vector, are_coins_sorted};
-  use interest_protocol::router;
-
+  use sui::sui::SUI;
   const ERROR_TX_DEADLINE_REACHED: u64 = 1;
 
-  /**
-  * @dev This function does not require the coins to be sorted. It will send back any unused value. 
-  * It create a volatile Pool with Coins X and Y
-  * @param storage The DEXStorage object of the interest_protocol::dex 
-  * @param clock_object The shared Clock object at id @0x6
-  * @param vector_x  A list of Coin<X>, the contract will merge all coins into with the `coin_x_amount` and return any extra value
-  * @param vector_y  A list of Coin<Y>, the contract will merge all coins into with the `coin_y_amount` and return any extra value 
-  * @param coin_x_amount The desired amount of Coin<X> to send
-  * @param coin_y_amount The desired amount of Coin<Y> to send
-  */
-  entry public fun create_v_pool<X, Y>(
-      storage: &mut DEXStorage,
-      clock_object: &Clock,
-      vector_x: vector<Coin<X>>,
-      vector_y: vector<Coin<Y>>,
-      coin_x_amount: u64,
-      coin_y_amount: u64,
-      ctx: &mut TxContext
-  ) {
-
-    let coin_x = handle_coin_vector<X>(vector_x, coin_x_amount, ctx);
-    let coin_y = handle_coin_vector<Y>(vector_y, coin_y_amount, ctx);
-
-    // Sorts for the caller - to make it easier for the frontend
-    if (are_coins_sorted<X, Y>()) {
-      transfer::public_transfer(
-        dex::create_v_pool(
-          storage,
-          clock_object,
-          coin_x,
-          coin_y,
-          ctx
-        ),
-        tx_context::sender(ctx)
-      )
-    } else {
-      transfer::public_transfer(
-        dex::create_v_pool(
-          storage,
-          clock_object,
-          coin_y,
-          coin_x,
-          ctx
-        ),
-        tx_context::sender(ctx)
-      )
-    }
-  }
-
-  /**
-  * @dev This function does not require the coins to be sorted. It will send back any unused value. 
-  * It create a volatile Pool with Coins X and Y
-  * @param storage The DEXStorage object of the interest_protocol::dex
-  * @param clock_object The shared Clock object at id @0x6
-  * @param vector_x  A list of Coin<X>, the contract will merge all coins into with the `coin_x_amount` and return any extra value
-  * @param vector_y  A list of Coin<Y>, the contract will merge all coins into with the `coin_y_amount` and return any extra value 
-  * @param coin_x_amount The desired amount of Coin<X> to send
-  * @param coin_y_amount The desired amount of Coin<Y> to send
-  * @param coin_x_metadata The metadata oject of Coin<X>
-  * @param coin_y_metadata The metadata oject of Coin<Y>
-  */
-  entry public fun create_s_pool<X, Y>(
-      storage: &mut DEXStorage,
-      clock_object: &Clock,
-      vector_x: vector<Coin<X>>,
-      vector_y: vector<Coin<Y>>,
-      coin_x_amount: u64,
-      coin_y_amount: u64,
-      coin_x_metadata: &CoinMetadata<X>,
-      coin_y_metadata: &CoinMetadata<Y>,
-      ctx: &mut TxContext
-  ) {
-
-    let coin_x = handle_coin_vector<X>(vector_x, coin_x_amount, ctx);
-    let coin_y = handle_coin_vector<Y>(vector_y, coin_y_amount, ctx);
-
-    // Sorts for the caller - to make it easier for the frontend
-    if (are_coins_sorted<X, Y>()) {
-      transfer::public_transfer(
-        dex::create_s_pool(
-          storage,
-          clock_object,
-          coin_x,
-          coin_y,
-          coin_x_metadata,
-          coin_y_metadata,
-          ctx
-        ),
-        tx_context::sender(ctx)
-      )
-    } else {
-      transfer::public_transfer(
-        dex::create_s_pool(
-          storage,
-          clock_object,
-          coin_y,
-          coin_x,
-          coin_y_metadata,
-          coin_x_metadata,
-          ctx
-        ),
-        tx_context::sender(ctx)
-      )
-    }
-  }
-
-  /**
-  * @dev This function requires the tokens to be sorted
-  * It performs a swap and finds the most profitable pool. X -> Y on Pool<X, Y>
-  * @param storage The DEXStorage object of the interest_protocol::dex
-  * @param clock_object The shared Clock object at id @0x6
-  * @param vector_x A vector of several Coin<X> 
-  * @param coin_x_amount The value the caller wishes to deposit for Coin<X> 
-  * @param coin_out_min_value The minimum value the caller expects to receive to protect agaisnt slippage
-  * @param deadline The TX must be submitted before this timestamp
-  */
-  entry public fun swap_x<X, Y>(
-    storage: &mut DEXStorage,
-    clock_object: &Clock,
-    vector_x: vector<Coin<X>>,
-    coin_x_amount: u64,
-    coin_out_min_value: u64,
-    deadline: u64,
-    ctx: &mut TxContext
-  ) {
-    assert!(deadline >= clock::timestamp_ms(clock_object), ERROR_TX_DEADLINE_REACHED);
-
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    let coin_x = handle_coin_vector<X>(vector_x, coin_x_amount, ctx);
-
-    transfer::public_transfer(
-      router::swap_token_x<X, Y>(
-      storage,
-      clock_object,
-      coin_x,
-      coin_out_min_value,
-      ctx
-      ),
-      tx_context::sender(ctx)
-    );
-  }
-
-  /**
-  * @dev This function requires the tokens to be sorted
-  * It performs a swap and finds the most profitable pool. Y -> X on Pool<X, Y>
-  * @param storage The DEXStorage object of the interest_protocol::dex
-  * @param clock_object The shared Clock object at id @0x6
-  * @param vector_y A vector of several Coin<Y> 
-  * @param coin_y_amount The value the caller wishes to deposit for Coin<Y>
-  * @param coin_out_min_value The minimum value the caller expects to receive to protect agaisnt slippage
-  * @param deadline The TX must be submitted before this timestamp
-  */
-  entry public fun swap_y<X, Y>(
-    storage: &mut DEXStorage,
-    clock_object: &Clock,
-    vector_y: vector<Coin<Y>>,
-    coin_y_amount: u64,
-    coin_out_min_value: u64,
-    deadline: u64,
-    ctx: &mut TxContext
-  ) {
-    assert!(deadline >= clock::timestamp_ms(clock_object), ERROR_TX_DEADLINE_REACHED);
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    let coin_y = handle_coin_vector<Y>(vector_y, coin_y_amount, ctx);
-
-    transfer::public_transfer(
-      router::swap_token_y<X, Y>(
-      storage,
-      clock_object,
-      coin_y,
-      coin_out_min_value,
-      ctx
-      ),
-      tx_context::sender(ctx)
-    );
-  }
-
-
-  /**
-  * @dev This function does not require the coins to be sorted. It will send back any unused value. 
-  * It performs an one hop swap and finds the most profitable pool. X -> B -> Y on Pool<X, B> -> Pool<B, Y>
-  * @param storage The DEXStorage object of the interest_protocol::dex
-  * @param clock_object The shared Clock object
-  * @param vector_x A vector of several Coin<X> 
-  * @param coin_x_amount The value the caller wishes to deposit for Coin<X> 
-  * @param coin_out_min_value The minimum value the caller expects to receive to protect agaisnt slippage
-  * @param deadline Timestamp indicating the deadline for this TX to be submitted
-  */
-  entry public fun one_hop_swap<X, B, Y>(
-    storage: &mut DEXStorage,
-    clock_object: &Clock,
-    vector_x: vector<Coin<X>>,
-    coin_x_amount: u64,
-    coin_out_min_value: u64,
-    deadline: u64,
-    ctx: &mut TxContext
-  ) {
-    assert!(deadline >= clock::timestamp_ms(clock_object), ERROR_TX_DEADLINE_REACHED);
-
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    let coin_x = handle_coin_vector<X>(vector_x, coin_x_amount, ctx);
-
-    transfer::public_transfer(
-      router::one_hop_swap<X, B, Y>(
-      storage,
-      clock_object,
-      coin_x,
-      coin_out_min_value,
-      ctx
-      ),
-      tx_context::sender(ctx)
-    )
-  }
-
-  /**
-  * @dev This function does not require the coins to be sorted. It will send back any unused value. 
-  * It performs a three hop swap and finds the most profitable pool. X -> B1 -> B2 -> Y or Y -> B1 -> B2 -> X on Pool<X, Z> -> Pool<B1, B2> -> Pool<B2, Y>
-  * @param storage The DEXStorage object of the interest_protocol::dex  
-  * @param clock_object The shared Clock object
-  * @param vector_x A vector of several Coin<X> 
-  * @param coin_x_amount The value the caller wishes to deposit for Coin<X> 
-  * @param coin_out_min_value The minimum value the caller expects to receive to protect agaisnt slippage
-  * @param deadline Timestamp indicating the deadline for this TX to be submitted
-  */
-  entry public fun two_hop_swap<X, B1, B2, Y>(
-    storage: &mut DEXStorage,
-    clock_object: &Clock,
-    vector_x: vector<Coin<X>>,
-    coin_x_amount: u64,
-    coin_out_min_value: u64,
-    deadline: u64,
-    ctx: &mut TxContext
-  ) {
-    assert!(deadline >= clock::timestamp_ms(clock_object), ERROR_TX_DEADLINE_REACHED);
-
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    let coin_x = handle_coin_vector<X>(vector_x, coin_x_amount, ctx);
-
-    transfer::public_transfer(
-      router::two_hop_swap<X, B1, B2, Y>(
-      storage,
-      clock_object,
-      coin_x,
-      coin_out_min_value,
-      ctx
-      ),
-      tx_context::sender(ctx)
-    )
-  }
-
-  /**
-  * @dev This function does not require the coins to be sorted. It will send back any unused value. 
-  * It adds liquidity to a Pool
-  * @param storage The DEXStorage object of the interest_protocol::dex  
-  * @param clock_object The shared Clock object
-  * @param vector_x  A list of Coin<X>, the contract will merge all coins into with the `coin_x_amount` and return any extra value
-  * @param vector_y  A list of Coin<Y>, the contract will merge all coins into with the `coin_y_amount` and return any extra value 
-  * @param coin_x_amount The desired amount of Coin<X> to send
-  * @param coin_y_amount The desired amount of Coin<Y> to send
-  * @param coin_out_min_value The minimum value the caller expects to receive to protect agaisnt slippage
-  */
-  entry public fun add_liquidity<C, X, Y>(
-    storage: &mut DEXStorage,
-    clock_object: &Clock,
-    vector_x: vector<Coin<X>>,
-    vector_y: vector<Coin<Y>>,
-    coin_x_amount: u64,
-    coin_y_amount: u64,
-    coin_min_amount: u64,
-    ctx: &mut TxContext
-  ) {
-
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    let coin_x = handle_coin_vector<X>(vector_x, coin_x_amount, ctx);
-    let coin_y = handle_coin_vector<Y>(vector_y, coin_y_amount, ctx);
-
-      if (are_coins_sorted<X, Y>()) {
-        transfer::public_transfer(
-          router::add_liquidity<C, X, Y>(
-          storage,
-          clock_object,
-          coin_x,
-          coin_y,
-          coin_min_amount,
-          ctx
-          ),
-        tx_context::sender(ctx)
-      )  
-      } else {
-        transfer::public_transfer(
-          router::add_liquidity<C, Y, X>(
-          storage,
-          clock_object,
-          coin_y,
-          coin_x,
-          coin_min_amount,
-          ctx
-          ),
-        tx_context::sender(ctx)
-      )  
-      }
-    }
-
-  /**
-  * @dev This function REQUIRES the coins to be sorted. It will send back any unused value. 
-  * It removes liquidity from a volatile pool based on the shares
-  * @param storage The DEXStorage object of the interest_protocol::dex 
-  * @param clock_object The shared Clock object
-  * @param vector_lp_coin A vector of several VLPCoins
-  * @param lp_coin_amount The value the caller wishes to deposit for VLPCoins 
-  * @param coin_x_min_amount The minimum amount of Coin<X> the user wishes to receive
-  * @param coin_y_min_amount The minimum amount of Coin<Y> the user wishes to receive
-  */
-  entry public fun remove_liquidity<C, X, Y>(
-    storage: &mut DEXStorage,
-    clock_object: &Clock,
-    vector_lp_coin: vector<Coin<LPCoin<C, X, Y>>>,
-    lp_coin_amount: u64,
-    coin_x_min_amount: u64,
-    coin_y_min_amount: u64,
-    ctx: &mut TxContext
-  ){
-    let sender = tx_context::sender(ctx);
-
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    let lp_coin = handle_coin_vector<LPCoin<C, X, Y>>(vector_lp_coin, lp_coin_amount, ctx);
-
-    let (coin_x, coin_y) = dex::remove_liquidity(
-      storage,
-      clock_object,
-      lp_coin, 
-      coin_x_min_amount,
-      coin_y_min_amount,
-      ctx
-    );
-
-    transfer::public_transfer(coin_x, sender);
-    transfer::public_transfer(coin_y, sender);
-  }
 
 /**
 * @notice It allows a user to deposit a Coin<T> in a farm to earn Coin<IPX>. 
 * @param storage The MasterChefStorage shared object
+* @param balanceStorage The Masterchef Balance storage shared object
 * @param accounts_storage The MasterChefAccountStorage shared object
 * @param ipx_storage The shared Object of IPX
 * @param clock_object The Clock object created at genesis
 * @param vector_token  A list of Coin<Y>, the contract will merge all coins into with the `coin_y_amount` and return any extra value 
 * @param coin_token_amount The desired amount of Coin<X> to send
 */
-  entry public fun stake<T>(
+  entry public fun stake(
     storage: &mut MasterChefStorage,
+    balancestorage: &mut MasterChefBalanceStorage, 
     accounts_storage: &mut MasterChefAccountStorage,
     ipx_storage: &mut IPXStorage,
     clock_object: &Clock,
-    vector_token: vector<Coin<T>>,
-    coin_token_amount: u64,
+    token: Coin<SUI>,
     ctx: &mut TxContext
   ) {
 
     // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
     // vector total value - coin desired value
-    let token = handle_coin_vector<T>(vector_token, coin_token_amount, ctx);
-
     // Stake and send Coin<IPX> rewards to the caller.
     transfer::public_transfer(
       master_chef::stake(
         storage,
+        balancestorage,
         accounts_storage,
         ipx_storage,
         clock_object,
@@ -408,8 +59,9 @@ module interest_protocol::interface {
 * @param clock_object The Clock object created at genesis
 * @param coin_value The amount of Coin<T> the caller wishes to withdraw
 */
-  entry public fun unstake<T>(
+  entry public fun unstake(
     storage: &mut MasterChefStorage,
+    balancestorage: &mut MasterChefBalanceStorage, 
     accounts_storage: &mut MasterChefAccountStorage,
     ipx_storage: &mut IPXStorage,
     clock_object: &Clock,
@@ -418,8 +70,9 @@ module interest_protocol::interface {
   ) {
     let sender = tx_context::sender(ctx);
     // Unstake yields Coin<IPX> rewards.
-    let (coin_ipx, coin) = master_chef::unstake<T>(
+    let (coin_ipx, coin) = master_chef::unstake(
         storage,
+        balancestorage,
         accounts_storage,
         ipx_storage,
         clock_object,
@@ -479,19 +132,7 @@ module interest_protocol::interface {
     ipx::burn(storage, coin_ipx);
   }
 
-  /**
-  * @dev It returns the ID of a pool so frontend clients can fetch using sui_getObject. It does not need to be oredered
-  * @param storage The DEXStorage shared object from the interest_protocol::dex module 
-  * @return the unique ID of a deployed pool
-  */
-  public fun get_pool_id<C, X, Y>(storage: &DEXStorage): ID {
-    if (are_coins_sorted<X, Y>()) {
-      dex::get_pool_id<C, X, Y>(storage)
-    } else {
-      dex::get_pool_id<C, Y, X>(storage)
-    }
-  }
-
+  
   /**
   * @dev A utility function to return to the frontend the allocation, pool_balance and _account balance of farm for Coin<X>
   * @param storage The MasterChefStorage shared object
@@ -512,7 +153,7 @@ module interest_protocol::interface {
     vector::push_back(&mut inner_vector, pool_balance);
 
     if (master_chef::account_exists<X>(storage, accounts_storage, account)) {
-      let (account_balance, _) = master_chef::get_account_info<X>(storage, accounts_storage, account);
+      let (account_balance, _) = master_chef::get_account_info(storage, accounts_storage, account);
       vector::push_back(&mut inner_vector, account_balance);
     } else {
       vector::push_back(&mut inner_vector, 0);
