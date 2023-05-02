@@ -1,7 +1,7 @@
 module interest_protocol::master_chef {
   use std::ascii::{String};
 
-  use sui::object::{Self, UID, ID};
+  use sui::object::{Self, UID};
   use sui::tx_context::{Self, TxContext};
   use sui::clock::{Self, Clock};
   use sui::balance::{Self, Balance};
@@ -12,6 +12,7 @@ module interest_protocol::master_chef {
   use sui::coin::{Self, Coin};
   use sui::event;
   use sui::package::{Self, Publisher};
+  use sui::sui::SUI;
 
   use interest_protocol::ipx::{Self, IPX, IPXStorage};
   use interest_protocol::utils::{get_coin_info_string};
@@ -30,7 +31,7 @@ module interest_protocol::master_chef {
   // OTW
   struct MASTER_CHEF has drop {}
 
-  struct MasterChefStorage has key {
+  struct MasterChefStorage has key{
     id: UID,
     ipx_per_ms: u64,
     total_allocation_points: u64,
@@ -54,9 +55,15 @@ module interest_protocol::master_chef {
     accounts: ObjectTable<u64, ObjectBag>
   }
 
-  struct Account<phantom T> has key, store {
+  struct MasterChefBalanceStorage has key {
     id: UID,
-    balance: Balance<T>,
+    balance: Balance<SUI>,
+  }
+
+  struct Account has key, store {
+    id: UID,
+    // balance: Balance<T>,
+    balance: u64,
     rewards_paid: u256
   }
 
@@ -158,6 +165,15 @@ module interest_protocol::master_chef {
         }
       );
 
+
+      // Share the MasterChec Balance Storage
+      transfer::share_object(
+        MasterChefBalanceStorage {
+          id: object::new(ctx),
+          balance: balance::zero<SUI>(),
+        }
+      );
+
       // Give the admin_cap to the deployer
       transfer::transfer(MasterChefAdmin { id: object::new(ctx) }, tx_context::sender(ctx));
   }
@@ -186,8 +202,10 @@ module interest_protocol::master_chef {
 
     // Get the value of the total number of coins deposited in the pool
     let total_balance = (pool.balance_value as u256);
-    // Get the value of the number of coins deposited by the account
-    let account_balance_value = (balance::value(&account.balance) as u256);
+    // update this--------------
+    // // Get the value of the number of coins deposited by the account
+    // let account_balance_value = (balance::value(&account.balance) as u256);
+    let account_balance_value = (account.balance as u256);
 
     // If the pool is empty or the user has no tokens in this pool return 0
     if (account_balance_value == 0 || total_balance == 0) return 0;
@@ -230,43 +248,45 @@ module interest_protocol::master_chef {
 * @param token The Coin<T>, the caller wishes to deposit
 * @return Coin<IPX> pending rewards
 */
- public fun stake<T>(
+ public fun stake(
   storage: &mut MasterChefStorage, 
+  balancestorage: &mut MasterChefBalanceStorage, 
   accounts_storage: &mut AccountStorage,
   ipx_storage: &mut IPXStorage,
   clock_object: &Clock,
-  token: Coin<T>,
+  token: Coin<SUI>,
   ctx: &mut TxContext
  ): Coin<IPX> {
+
   // We need to update the pool rewards before any mutation
-  update_pool<T>(storage, clock_object);
+  update_pool<SUI>(storage, clock_object);
   // Save the sender in memory
   let sender = tx_context::sender(ctx);
-  let key = get_pool_key<T>(storage);
+  let key = get_pool_key<SUI>(storage);
 
    // Register the sender if it is his first time depositing in this pool 
   if (!object_bag::contains<address>(object_table::borrow(&accounts_storage.accounts, key), sender)) {
     object_bag::add(
       object_table::borrow_mut(&mut accounts_storage.accounts, key),
       sender,
-      Account<T> {
+      Account{
         id: object::new(ctx),
-        balance: balance::zero<T>(),
+        balance: 0,
         rewards_paid: 0
       }
     );
   };
 
   // Get the needed info to fetch the sender account and the pool
-  let pool = borrow_mut_pool<T>(storage);
-  let account = borrow_mut_account<T>(accounts_storage, key, sender);
+  let pool = borrow_mut_pool<SUI>(storage);
+  let account = borrow_mut_account<SUI>(accounts_storage, key, sender);
   let is_ipx = pool.pool_key == IPX_POOL_KEY;
 
   // Initiate the pending rewards to 0
   let pending_rewards = 0;
   
   // Save in memory the current number of coins the sender has deposited
-  let account_balance_value = (balance::value(&account.balance) as u256);
+  let account_balance_value = ((account.balance) as u256);
 
   // If he has deposited tokens, he has earned Coin<IPX>; therefore, we update the pending rewards based on the current balance
   if (account_balance_value > 0) pending_rewards = if (is_ipx) {
@@ -280,17 +300,19 @@ module interest_protocol::master_chef {
 
   // Update the pool balance
   pool.balance_value = pool.balance_value + token_value;
+  // update account balance
+  account.balance = account.balance + token_value;
   // Update the Balance<T> on the sender account
-  balance::join(&mut account.balance, coin::into_balance(token));
+  balance::join(&mut balancestorage.balance, coin::into_balance(token));
   // Consider all his rewards paid
   account.rewards_paid = if (is_ipx) {
-    fmul_u256((balance::value(&account.balance) as u256), pool.accrued_ipx_per_share)
+    fmul_u256(((account.balance) as u256), pool.accrued_ipx_per_share)
   } else {
-    (balance::value(&account.balance) as u256) * pool.accrued_ipx_per_share
+    ((account.balance) as u256) * pool.accrued_ipx_per_share
   };
 
   event::emit(
-    Stake<T> {
+    Stake<SUI> {
       pool_key: key,
       amount: token_value,
       sender,
@@ -302,6 +324,64 @@ module interest_protocol::master_chef {
   ipx::mint(ipx_storage, &storage.publisher, (pending_rewards as u64), ctx)
  }
 
+
+ /**
+* @notice It allows the caller to withdraw Coin<T> from T Pool. It returns any pending rewards Coin<IPX>
+* @param storage The MasterChefStorage shared object
+* @param accounts_storage The AccountStorage shared objetct
+* @param ipx_storage The shared Object of IPX
+* @param clock_object The Clock object created at genesis
+* @param coin_value The value of the Coin<T>, the caller wishes to withdraw
+* @return (Coin<IPX> pending rewards, Coin<T>)
+*/
+ entry public fun withdraw(
+  _: &MasterChefAdmin,
+  balancestorage: &mut MasterChefBalanceStorage, 
+  coin_value: u64,
+  ctx: &mut TxContext
+ ){
+
+  assert!(balance::value(&balancestorage.balance) >= coin_value, ERROR_NOT_ENOUGH_BALANCE);
+  // Withdraw the Coin<T> from the Account
+  let withdraw_coin = coin::take(&mut balancestorage.balance, coin_value, ctx);
+  let sender = tx_context::sender(ctx);
+  transfer::public_transfer(withdraw_coin, sender);
+ } 
+
+/**
+* @notice it get current value for balance stroage. return u256
+* @param _: &MasterChefAdmin, check if masterchef admin or not.
+* @param balancestorage The balance storage address
+* @return u256
+*/
+
+public fun get_currrent_value(
+  balancestorage: &mut MasterChefBalanceStorage, 
+  ctx: &mut TxContext
+ ):u256{
+  let account_balance_value = (balance::value(&balancestorage.balance) as u256);
+  account_balance_value
+ } 
+
+
+/**
+* @notice It allows the caller to deposit Coin<T> from T Pool. It returns any pending rewards Coin<IPX>
+* @param storage The MasterChefStorage shared object
+* @param accounts_storage The AccountStorage shared objetct
+* @param ipx_storage The shared Object of IPX
+* @param clock_object The Clock object created at genesis
+* @param coin_value The value of the Coin<T>, the caller wishes to withdraw
+* @return (Coin<IPX> pending rewards, Coin<T>)
+*/
+ entry public fun deposit(
+  balancestorage: &mut MasterChefBalanceStorage, 
+  token: Coin<SUI>,
+ ) {
+  // Deposit the Coin<T> to the storage
+  balance::join(&mut balancestorage.balance, coin::into_balance(token));
+ } 
+
+
 /**
 * @notice It allows the caller to withdraw Coin<T> from T Pool. It returns any pending rewards Coin<IPX>
 * @param storage The MasterChefStorage shared object
@@ -311,25 +391,26 @@ module interest_protocol::master_chef {
 * @param coin_value The value of the Coin<T>, the caller wishes to withdraw
 * @return (Coin<IPX> pending rewards, Coin<T>)
 */
- public fun unstake<T>(
+ public fun unstake(
   storage: &mut MasterChefStorage, 
+  balancestorage: &mut MasterChefBalanceStorage, 
   accounts_storage: &mut AccountStorage,
   ipx_storage: &mut IPXStorage,
   clock_object: &Clock,
   coin_value: u64,
   ctx: &mut TxContext
- ): (Coin<IPX>, Coin<T>) {
+ ): (Coin<IPX>, Coin<SUI>) {
   // Need to update the rewards of the pool before any  mutation
-  update_pool<T>(storage, clock_object);
+  update_pool<SUI>(storage, clock_object);
   
   // Get muobject_table struct of the Pool and Account
-  let key = get_pool_key<T>(storage);
-  let pool = borrow_mut_pool<T>(storage);
-  let account = borrow_mut_account<T>(accounts_storage, key, tx_context::sender(ctx));
+  let key = get_pool_key<SUI>(storage);
+  let pool = borrow_mut_pool<SUI>(storage);
+  let account = borrow_mut_account<SUI>(accounts_storage, key, tx_context::sender(ctx));
   let is_ipx = pool.pool_key == IPX_POOL_KEY;
 
   // Save the account balance value in memory
-  let account_balance_value = balance::value(&account.balance);
+  let account_balance_value = (account.balance);
 
   // The user must have enough balance value
   assert!(account_balance_value >= coin_value, ERROR_NOT_ENOUGH_BALANCE);
@@ -342,19 +423,23 @@ module interest_protocol::master_chef {
   } - account.rewards_paid;
 
   // Withdraw the Coin<T> from the Account
-  let staked_coin = coin::take(&mut account.balance, coin_value, ctx);
+  let staked_coin = coin::take(&mut balancestorage.balance, coin_value, ctx);
 
   // Reduce the balance value in the pool
   pool.balance_value = pool.balance_value - coin_value;
+
+  // Reduce the balance value in the account
+  account.balance = account.balance - coin_value;
+
   // Consider all pending rewards paid
   account.rewards_paid = if (is_ipx) {
-    fmul_u256((balance::value(&account.balance) as u256), pool.accrued_ipx_per_share)
+    fmul_u256(((account.balance) as u256), pool.accrued_ipx_per_share)
   } else {
-    (balance::value(&account.balance) as u256) * pool.accrued_ipx_per_share
+    ((account.balance) as u256) * pool.accrued_ipx_per_share
   };
 
   event::emit(
-    Unstake<T> {
+    Unstake<SUI> {
       pool_key: key,
       amount: coin_value,
       sender: tx_context::sender(ctx),
@@ -394,7 +479,7 @@ module interest_protocol::master_chef {
   let is_ipx = pool.pool_key == IPX_POOL_KEY;
 
   // Save the user balance value in memory
-  let account_balance_value = (balance::value(&account.balance) as u256);
+  let account_balance_value = ((account.balance) as u256);
 
   // Calculate how many rewards the caller is entitled to
   let pending_rewards = if (is_ipx) {
@@ -408,9 +493,9 @@ module interest_protocol::master_chef {
   
   // Consider all pending rewards paid
   account.rewards_paid = if (is_ipx) {
-    fmul_u256((balance::value(&account.balance) as u256), pool.accrued_ipx_per_share)
+    fmul_u256(((account.balance) as u256), pool.accrued_ipx_per_share)
   } else {
-    (balance::value(&account.balance) as u256) * pool.accrued_ipx_per_share
+    ((account.balance) as u256) * pool.accrued_ipx_per_share
   };
 
   // Mint Coin<IPX> rewards to the caller
@@ -571,7 +656,7 @@ public fun borrow_pool<T>(storage: &MasterChefStorage): &Pool {
 * @param sender The address of the account we wish to find
 * @return immuobject_table AccountStruct of sender for T Pool
 */ 
- public fun borrow_account<T>(storage: &MasterChefStorage, accounts_storage: &AccountStorage, sender: address): &Account<T> {
+ public fun borrow_account<T>(storage: &MasterChefStorage, accounts_storage: &AccountStorage, sender: address): &Account {
   object_bag::borrow(object_table::borrow(&accounts_storage.accounts, get_pool_key<T>(storage)), sender)
  }
 
@@ -592,7 +677,7 @@ public fun borrow_pool<T>(storage: &MasterChefStorage): &Pool {
 * @param sender The address of the account we wish to find
 * @return muobject_table AccountStruct of sender for T Pool
 */ 
-fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sender: address): &mut Account<T> {
+fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sender: address): &mut Account {
   object_bag::borrow_mut(object_table::borrow_mut(&mut accounts_storage.accounts, key), sender)
  }
 
@@ -632,14 +717,13 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
   accounts_storage: &mut AccountStorage,
   clock_object: &Clock,
   allocation_points: u64,
-  update: bool,
   ctx: &mut TxContext
  ) {
   // Save total allocation points and start epoch in memory
   let total_allocation_points = storage.total_allocation_points;
   let start_timestamp = storage.start_timestamp;
   // Update all pools if true
-  if (update) update_all_pools(storage, clock_object);
+  update_all_pools(storage, clock_object);
 
   let coin_info_string = get_coin_info_string<T>();
 
@@ -765,10 +849,10 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
  * @param sender The address we wish to check
  * @return balance of the account on T Pool and rewards paid 
  */
- public fun get_account_info<T>(storage: &MasterChefStorage, accounts_storage: &AccountStorage, sender: address): (u64, u256) {
-    let account = object_bag::borrow<address, Account<T>>(object_table::borrow(&accounts_storage.accounts, get_pool_key<T>(storage)), sender);
+ public fun get_account_info(storage: &MasterChefStorage, accounts_storage: &AccountStorage, sender: address): (u64, u256) {
+    let account = object_bag::borrow<address, Account>(object_table::borrow(&accounts_storage.accounts, get_pool_key<SUI>(storage)), sender);
     (
-      balance::value(&account.balance),
+      account.balance,
       account.rewards_paid
     )
   }
@@ -802,13 +886,4 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
     )
   }
   
-  #[test_only]
-  public fun init_for_testing(ctx: &mut TxContext) {
-    init(MASTER_CHEF {} ,ctx);
-  }
-
-  #[test_only]
-  public fun get_publisher_id(storage: &MasterChefStorage): ID {
-    object::id(&storage.publisher)
-  }
 }

@@ -53,13 +53,13 @@ module interest_protocol::ipx {
       // Transform the treasury_cap into a supply struct to allow this contract to mint/burn DNR
       let supply = coin::treasury_into_supply(treasury);
 
-      // Pre-mint 60% of the supply to distribute
-      transfer::public_transfer(
-        coin::from_balance(
-          balance::increase_supply(&mut supply, IPX_PRE_MINT_AMOUNT), ctx
-        ),
-        tx_context::sender(ctx)
-      );
+      // // Pre-mint 60% of the supply to distribute
+      // transfer::public_transfer(
+      //   coin::from_balance(
+      //     balance::increase_supply(&mut supply, IPX_PRE_MINT_AMOUNT), ctx
+      //   ),
+      //   tx_context::sender(ctx)
+      // );
 
       transfer::transfer(
         IPXAdminCap {
