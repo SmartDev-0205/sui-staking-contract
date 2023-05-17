@@ -1,9 +1,9 @@
 // A utility package to calculate properly calculate shares of a pool when losses or profits are incurred
 // Base represents the shares
 // Elastic represents the actual amount
-module interest_protocol::rebase {
+module liquidify_protocol::rebase {
 
-  use interest_protocol::math::{mul_div_u128};
+  use liquidify_protocol::math::{mul_div_u128};
     
    struct Rebase has store {
      base: u128,

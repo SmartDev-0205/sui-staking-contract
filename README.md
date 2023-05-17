@@ -26,3 +26,4 @@ Make sure you have the latest version of the Sui binaries installed on your mach
 
 - Telegram: @trust0205
 - Skype: live:.cid.56b52b2d030c769f
+# liquidify-staking-contract

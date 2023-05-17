@@ -1,5 +1,5 @@
 /// From https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-stdlib/sources/comparator.move
-module interest_protocol::comparator {
+module liquidify_protocol::comparator {
     use std::bcs;
     use std::vector;
 

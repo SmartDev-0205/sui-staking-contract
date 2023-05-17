@@ -1,4 +1,4 @@
-module interest_protocol::master_chef {
+module liquidify_protocol::master_chef {
   use std::ascii::{String};
 
   use sui::object::{Self, UID};
@@ -14,15 +14,15 @@ module interest_protocol::master_chef {
   use sui::package::{Self, Publisher};
   use sui::sui::SUI;
 
-  use interest_protocol::ipx::{Self, IPX, IPXStorage};
-  use interest_protocol::utils::{get_coin_info_string};
-  use interest_protocol::math::{fdiv_u256, fmul_u256};
+  use liquidify_protocol::sip::{Self, SIP, SIPStorage};
+  use liquidify_protocol::utils::{get_coin_info_string};
+  use liquidify_protocol::math::{fdiv_u256, fmul_u256};
 
   // TODO needs to be updated based on real time before mainnet
   const START_TIMESTAMP: u64 = 0;
   // TODO need to be updated to match the tokenomics
-  const IPX_PER_MS: u64 = 1268391; // 40M IPX per year
-  const IPX_POOL_KEY: u64 = 0;
+  const SIP_PER_MS: u64 = 12683; // 4M SIP per year
+  const SIP_POOL_KEY: u64 = 0;
 
   const ERROR_POOL_ADDED_ALREADY: u64 = 1;
   const ERROR_NOT_ENOUGH_BALANCE: u64 = 2;
@@ -33,7 +33,7 @@ module interest_protocol::master_chef {
 
   struct MasterChefStorage has key{
     id: UID,
-    ipx_per_ms: u64,
+    sip_per_ms: u64,
     total_allocation_points: u64,
     pool_keys: Table<String, PoolKey>,
     pools: ObjectTable<u64, Pool>,
@@ -45,7 +45,7 @@ module interest_protocol::master_chef {
     id: UID,
     allocation_points: u64,
     last_reward_timestamp: u64,
-    accrued_ipx_per_share: u256,
+    accrued_sip_per_share: u256,
     balance_value: u64,
     pool_key: u64
   }
@@ -64,7 +64,10 @@ module interest_protocol::master_chef {
     id: UID,
     // balance: Balance<T>,
     balance: u64,
-    rewards_paid: u256
+    rewards_paid: u256,
+    users:u64,
+    referral_reward:u64,
+    unclaimed_reward:u64,
   }
 
   struct PoolKey has store {
@@ -112,9 +115,9 @@ module interest_protocol::master_chef {
       let pool_keys = table::new<String, PoolKey>(ctx);
       let accounts = object_table::new<u64, ObjectBag>(ctx);
 
-      let coin_info_string = get_coin_info_string<IPX>();
+      let coin_info_string = get_coin_info_string<SIP>();
       
-      // Register the IPX farm in pool_keys
+      // Register the SIP farm in pool_keys
       table::add(
         &mut pool_keys, 
         coin_info_string, 
@@ -130,7 +133,7 @@ module interest_protocol::master_chef {
         object_bag::new(ctx)
       );
 
-      // Register the IPX farm on pools
+      // Register the SIP farm on pools
       object_table::add(
         &mut pools, 
         0, // Key is the length of the object_bag before a new element is added 
@@ -138,7 +141,7 @@ module interest_protocol::master_chef {
           id: object::new(ctx),
           allocation_points: 1000,
           last_reward_timestamp: START_TIMESTAMP,
-          accrued_ipx_per_share: 0,
+          accrued_sip_per_share: 0,
           balance_value: 0,
           pool_key: 0
           }
@@ -149,7 +152,7 @@ module interest_protocol::master_chef {
         MasterChefStorage {
           id: object::new(ctx),
           pools,
-          ipx_per_ms: IPX_PER_MS,
+          sip_per_ms: SIP_PER_MS,
           total_allocation_points: 1000,
           pool_keys,
           start_timestamp: START_TIMESTAMP,
@@ -179,8 +182,8 @@ module interest_protocol::master_chef {
   }
 
 /**
-* @notice It returns the number of Coin<IPX> rewards an account is entitled to for T Pool
-* @param storage The IPXStorage shared object
+* @notice It returns the number of Coin<SIP> rewards an account is entitled to for T Pool
+* @param storage The SIPStorage shared object
 * @param accounts_storage The AccountStorage shared objetct
 * @param account The function will return the rewards for this address
 * @return rewards
@@ -212,51 +215,52 @@ module interest_protocol::master_chef {
 
     // Save the current epoch in memory
     let current_timestamp = clock::timestamp_ms(clock_oject);
-    // save the accrued ipx per share in memory
-    let accrued_ipx_per_share = pool.accrued_ipx_per_share;
+    // save the accrued sip per share in memory
+    let accrued_sip_per_share = pool.accrued_sip_per_share;
 
-    let is_ipx = pool.pool_key == IPX_POOL_KEY;
+    let is_sip = pool.pool_key == SIP_POOL_KEY;
 
-    // If the pool is not up to date, we need to increase the accrued_ipx_per_share
+    // If the pool is not up to date, we need to increase the accrued_sip_per_share
     if (current_timestamp > pool.last_reward_timestamp) {
       // Calculate how many epochs have passed since the last update
       let timestamp_delta = ((current_timestamp - pool.last_reward_timestamp) as u256);
       // Calculate the total rewards for this pool
-      let rewards = (timestamp_delta * (storage.ipx_per_ms as u256)) * (pool.allocation_points as u256) / (storage.total_allocation_points as u256);
+      let rewards = (timestamp_delta * (storage.sip_per_ms as u256)) * (pool.allocation_points as u256) / (storage.total_allocation_points as u256);
 
-      // Update the accrued_ipx_per_share
-      accrued_ipx_per_share = accrued_ipx_per_share + if (is_ipx) {
+      // Update the accrued_sip_per_share
+      accrued_sip_per_share = accrued_sip_per_share + if (is_sip) {
         fdiv_u256(rewards, (pool.balance_value as u256))
           } else {
           (rewards / (pool.balance_value as u256))
           };
     };
     // Calculate the rewards for the user
-    return if (is_ipx) {
-      fmul_u256(account_balance_value, accrued_ipx_per_share) - account.rewards_paid
+    return if (is_sip) {
+      fmul_u256(account_balance_value, accrued_sip_per_share) - account.rewards_paid
     } else {
-      (account_balance_value * accrued_ipx_per_share) - account.rewards_paid
+      (account_balance_value * accrued_sip_per_share) - account.rewards_paid
     } 
   }
 
 /**
-* @notice It allows the caller to deposit Coin<T> in T Pool. It returns any pending rewards Coin<IPX>
+* @notice It allows the caller to deposit Coin<T> in T Pool. It returns any pending rewards Coin<SIP>
 * @param storage The MasterChefStorage shared object
 * @param accounts_storage The AccountStorage shared object
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of SIP
 * @param clock_object The Clock object created at genesis
 * @param token The Coin<T>, the caller wishes to deposit
-* @return Coin<IPX> pending rewards
+* @return Coin<SIP> pending rewards
 */
  public fun stake(
   storage: &mut MasterChefStorage, 
   balancestorage: &mut MasterChefBalanceStorage, 
   accounts_storage: &mut AccountStorage,
-  ipx_storage: &mut IPXStorage,
+  sip_storage: &mut SIPStorage,
+  referral:address,
   clock_object: &Clock,
   token: Coin<SUI>,
   ctx: &mut TxContext
- ): Coin<IPX> {
+ ): Coin<SIP> {
 
   // We need to update the pool rewards before any mutation
   update_pool<SUI>(storage, clock_object);
@@ -272,15 +276,47 @@ module interest_protocol::master_chef {
       Account{
         id: object::new(ctx),
         balance: 0,
-        rewards_paid: 0
+        rewards_paid: 0,
+        users:0,
+        referral_reward:0,
+        unclaimed_reward:0
       }
     );
   };
 
+
+ // Register the referral if it is his first time depositing in this pool 
+  if (referral != @0x0 && referral != sender){
+    if (!object_bag::contains<address>(object_table::borrow(&accounts_storage.accounts, key), referral)) {
+      object_bag::add(
+        object_table::borrow_mut(&mut accounts_storage.accounts, key),
+        referral,
+        Account{
+          id: object::new(ctx),
+          balance: 0,
+          rewards_paid: 0,
+          users:0,
+          referral_reward:0,
+          unclaimed_reward:0
+        }
+      );
+    };
+  };
+
+  // Save in memory how mnay coins the sender wishes to deposit
+  let token_value = coin::value(&token);
+
+
   // Get the needed info to fetch the sender account and the pool
   let pool = borrow_mut_pool<SUI>(storage);
+
+
+  if (referral !=@0x0){
+    update_account_referral<SUI>(accounts_storage, key, referral,token_value * 5 / 100);
+  };
+
   let account = borrow_mut_account<SUI>(accounts_storage, key, sender);
-  let is_ipx = pool.pool_key == IPX_POOL_KEY;
+  let is_sip = pool.pool_key == SIP_POOL_KEY;
 
   // Initiate the pending rewards to 0
   let pending_rewards = 0;
@@ -288,27 +324,30 @@ module interest_protocol::master_chef {
   // Save in memory the current number of coins the sender has deposited
   let account_balance_value = ((account.balance) as u256);
 
-  // If he has deposited tokens, he has earned Coin<IPX>; therefore, we update the pending rewards based on the current balance
-  if (account_balance_value > 0) pending_rewards = if (is_ipx) {
-    fmul_u256(account_balance_value, pool.accrued_ipx_per_share)
+  // If he has deposited tokens, he has earned Coin<SIP>; therefore, we update the pending rewards based on the current balance
+  if (account_balance_value > 0) pending_rewards = if (is_sip) {
+    fmul_u256(account_balance_value, pool.accrued_sip_per_share)
   } else {
-    (account_balance_value * pool.accrued_ipx_per_share)
+    (account_balance_value * pool.accrued_sip_per_share)
   } - account.rewards_paid;
 
-  // Save in memory how mnay coins the sender wishes to deposit
-  let token_value = coin::value(&token);
 
   // Update the pool balance
   pool.balance_value = pool.balance_value + token_value;
   // update account balance
-  account.balance = account.balance + token_value;
+  if (referral != @0x0){
+    account.balance = account.balance + token_value * 95 / 100;  
+  } else{
+    account.balance = account.balance + token_value;
+  };
+
   // Update the Balance<T> on the sender account
   balance::join(&mut balancestorage.balance, coin::into_balance(token));
   // Consider all his rewards paid
-  account.rewards_paid = if (is_ipx) {
-    fmul_u256(((account.balance) as u256), pool.accrued_ipx_per_share)
+  account.rewards_paid = if (is_sip) {
+    fmul_u256(((account.balance) as u256), pool.accrued_sip_per_share)
   } else {
-    ((account.balance) as u256) * pool.accrued_ipx_per_share
+    ((account.balance) as u256) * pool.accrued_sip_per_share
   };
 
   event::emit(
@@ -320,19 +359,19 @@ module interest_protocol::master_chef {
     }
   );
 
-  // Mint Coin<IPX> rewards for the caller.
-  ipx::mint(ipx_storage, &storage.publisher, (pending_rewards as u64), ctx)
+  // Mint Coin<SIP> rewards for the caller.
+  sip::mint(sip_storage, &storage.publisher, (pending_rewards as u64), ctx)
  }
 
 
  /**
-* @notice It allows the caller to withdraw Coin<T> from T Pool. It returns any pending rewards Coin<IPX>
+* @notice It allows the caller to withdraw Coin<T> from T Pool. It returns any pending rewards Coin<SIP>
 * @param storage The MasterChefStorage shared object
 * @param accounts_storage The AccountStorage shared objetct
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of SIP
 * @param clock_object The Clock object created at genesis
 * @param coin_value The value of the Coin<T>, the caller wishes to withdraw
-* @return (Coin<IPX> pending rewards, Coin<T>)
+* @return (Coin<SIP> pending rewards, Coin<T>)
 */
  entry public fun withdraw(
   _: &MasterChefAdmin,
@@ -348,6 +387,29 @@ module interest_protocol::master_chef {
   transfer::public_transfer(withdraw_coin, sender);
  } 
 
+
+ entry public fun claim_reward(
+  storage: &mut MasterChefStorage, 
+  balancestorage: &mut MasterChefBalanceStorage, 
+  accounts_storage: &mut AccountStorage,
+  clock_object: &Clock,
+  ctx: &mut TxContext
+ ){
+
+  update_pool<SUI>(storage, clock_object);
+  
+  // Get muobject_table struct of the Pool and Account
+  let key = get_pool_key<SUI>(storage);
+  let account = borrow_mut_account<SUI>(accounts_storage, key, tx_context::sender(ctx));
+  assert!(account.unclaimed_reward > 0, ERROR_NOT_ENOUGH_BALANCE);
+  let unclaimed_amount = account.unclaimed_reward;
+  let unclaimed_coin = coin::take(&mut balancestorage.balance, unclaimed_amount, ctx);
+  // Withdraw the Coin<T> from the Account
+  let sender = tx_context::sender(ctx);
+  transfer::public_transfer(unclaimed_coin, sender);
+  account.unclaimed_reward = 0;
+ } 
+
 /**
 * @notice it get current value for balance stroage. return u256
 * @param _: &MasterChefAdmin, check if masterchef admin or not.
@@ -357,7 +419,6 @@ module interest_protocol::master_chef {
 
 public fun get_currrent_value(
   balancestorage: &mut MasterChefBalanceStorage, 
-  ctx: &mut TxContext
  ):u256{
   let account_balance_value = (balance::value(&balancestorage.balance) as u256);
   account_balance_value
@@ -365,13 +426,13 @@ public fun get_currrent_value(
 
 
 /**
-* @notice It allows the caller to deposit Coin<T> from T Pool. It returns any pending rewards Coin<IPX>
+* @notice It allows the caller to deposit Coin<T> from T Pool. It returns any pending rewards Coin<SIP>
 * @param storage The MasterChefStorage shared object
 * @param accounts_storage The AccountStorage shared objetct
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of SIP
 * @param clock_object The Clock object created at genesis
 * @param coin_value The value of the Coin<T>, the caller wishes to withdraw
-* @return (Coin<IPX> pending rewards, Coin<T>)
+* @return (Coin<SIP> pending rewards, Coin<T>)
 */
  entry public fun deposit(
   balancestorage: &mut MasterChefBalanceStorage, 
@@ -383,23 +444,23 @@ public fun get_currrent_value(
 
 
 /**
-* @notice It allows the caller to withdraw Coin<T> from T Pool. It returns any pending rewards Coin<IPX>
+* @notice It allows the caller to withdraw Coin<T> from T Pool. It returns any pending rewards Coin<SIP>
 * @param storage The MasterChefStorage shared object
 * @param accounts_storage The AccountStorage shared objetct
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of SIP
 * @param clock_object The Clock object created at genesis
 * @param coin_value The value of the Coin<T>, the caller wishes to withdraw
-* @return (Coin<IPX> pending rewards, Coin<T>)
+* @return (Coin<SIP> pending rewards, Coin<T>)
 */
  public fun unstake(
   storage: &mut MasterChefStorage, 
   balancestorage: &mut MasterChefBalanceStorage, 
   accounts_storage: &mut AccountStorage,
-  ipx_storage: &mut IPXStorage,
+  sip_storage: &mut SIPStorage,
   clock_object: &Clock,
   coin_value: u64,
   ctx: &mut TxContext
- ): (Coin<IPX>, Coin<SUI>) {
+ ): (Coin<SIP>, Coin<SUI>) {
   // Need to update the rewards of the pool before any  mutation
   update_pool<SUI>(storage, clock_object);
   
@@ -407,7 +468,7 @@ public fun get_currrent_value(
   let key = get_pool_key<SUI>(storage);
   let pool = borrow_mut_pool<SUI>(storage);
   let account = borrow_mut_account<SUI>(accounts_storage, key, tx_context::sender(ctx));
-  let is_ipx = pool.pool_key == IPX_POOL_KEY;
+  let is_sip = pool.pool_key == SIP_POOL_KEY;
 
   // Save the account balance value in memory
   let account_balance_value = (account.balance);
@@ -416,10 +477,10 @@ public fun get_currrent_value(
   assert!(account_balance_value >= coin_value, ERROR_NOT_ENOUGH_BALANCE);
 
   // Calculate how many rewards the caller is entitled to
-  let pending_rewards = if (is_ipx) {
-    fmul_u256((account_balance_value as u256), pool.accrued_ipx_per_share)
+  let pending_rewards = if (is_sip) {
+    fmul_u256((account_balance_value as u256), pool.accrued_sip_per_share)
   } else {
-    ((account_balance_value as u256) * pool.accrued_ipx_per_share)
+    ((account_balance_value as u256) * pool.accrued_sip_per_share)
   } - account.rewards_paid;
 
   // Withdraw the Coin<T> from the Account
@@ -432,10 +493,10 @@ public fun get_currrent_value(
   account.balance = account.balance - coin_value;
 
   // Consider all pending rewards paid
-  account.rewards_paid = if (is_ipx) {
-    fmul_u256(((account.balance) as u256), pool.accrued_ipx_per_share)
+  account.rewards_paid = if (is_sip) {
+    fmul_u256(((account.balance) as u256), pool.accrued_sip_per_share)
   } else {
-    ((account.balance) as u256) * pool.accrued_ipx_per_share
+    ((account.balance) as u256) * pool.accrued_sip_per_share
   };
 
   event::emit(
@@ -447,9 +508,9 @@ public fun get_currrent_value(
     }
   );
 
-  // Mint Coin<IPX> rewards and returns the Coin<T>
+  // Mint Coin<SIP> rewards and returns the Coin<T>
   (
-    ipx::mint(ipx_storage, &storage.publisher, (pending_rewards as u64), ctx),
+    sip::mint(sip_storage, &storage.publisher, (pending_rewards as u64), ctx),
     staked_coin
   )
  } 
@@ -458,17 +519,17 @@ public fun get_currrent_value(
  * @notice It allows a caller to get all his pending rewards from T Pool
  * @param storage The MasterChefStorage shared object
  * @param accounts_storage The AccountStorage shared objetct
- * @param ipx_storage The shared Object of IPX
+ * @param sip_storage The shared Object of SIP
  * @param clock_object The Clock object created at genesis
- * @return Coin<IPX> the pending rewards
+ * @return Coin<SIP> the pending rewards
  */
  public fun get_rewards<T>(
   storage: &mut MasterChefStorage, 
   accounts_storage: &mut AccountStorage,
-  ipx_storage: &mut IPXStorage,
+  sip_storage: &mut SIPStorage,
   clock_object: &Clock,
   ctx: &mut TxContext
- ): Coin<IPX> {
+ ): Coin<SIP> {
   // Update the pool before any mutation
   update_pool<T>(storage, clock_object);
   
@@ -476,30 +537,30 @@ public fun get_currrent_value(
   let key = get_pool_key<T>(storage);
   let pool = borrow_pool<T>(storage);
   let account = borrow_mut_account<T>(accounts_storage, key, tx_context::sender(ctx));
-  let is_ipx = pool.pool_key == IPX_POOL_KEY;
+  let is_sip = pool.pool_key == SIP_POOL_KEY;
 
   // Save the user balance value in memory
   let account_balance_value = ((account.balance) as u256);
 
   // Calculate how many rewards the caller is entitled to
-  let pending_rewards = if (is_ipx) {
-    fmul_u256((account_balance_value as u256), pool.accrued_ipx_per_share)
+  let pending_rewards = if (is_sip) {
+    fmul_u256((account_balance_value as u256), pool.accrued_sip_per_share)
   } else {
-    ((account_balance_value as u256) * pool.accrued_ipx_per_share)
+    ((account_balance_value as u256) * pool.accrued_sip_per_share)
   } - account.rewards_paid;
 
   // No point to keep going if there are no rewards
   assert!(pending_rewards != 0, ERROR_NO_PENDING_REWARDS);
   
   // Consider all pending rewards paid
-  account.rewards_paid = if (is_ipx) {
-    fmul_u256(((account.balance) as u256), pool.accrued_ipx_per_share)
+  account.rewards_paid = if (is_sip) {
+    fmul_u256(((account.balance) as u256), pool.accrued_sip_per_share)
   } else {
-    ((account.balance) as u256) * pool.accrued_ipx_per_share
+    ((account.balance) as u256) * pool.accrued_sip_per_share
   };
 
-  // Mint Coin<IPX> rewards to the caller
-  ipx::mint(ipx_storage, &storage.publisher, (pending_rewards as u64), ctx)
+  // Mint Coin<SIP> rewards to the caller
+  sip::mint(sip_storage, &storage.publisher, (pending_rewards as u64), ctx)
  }
 
  /**
@@ -514,7 +575,7 @@ public fun get_currrent_value(
   let index = 0;
 
   // Save in memory key information before mutating the storage struct
-  let ipx_per_ms = storage.ipx_per_ms;
+  let sip_per_ms = storage.sip_per_ms;
   let total_allocation_points = storage.total_allocation_points;
   let start_timestamp = storage.start_timestamp;
 
@@ -524,7 +585,7 @@ public fun get_currrent_value(
     let pool = object_table::borrow_mut(&mut storage.pools, index);
 
     // Update the pool
-    update_pool_internal(pool, clock_object, ipx_per_ms, total_allocation_points, start_timestamp);
+    update_pool_internal(pool, clock_object, sip_per_ms, total_allocation_points, start_timestamp);
 
     // Increment the index
     index = index + 1;
@@ -537,7 +598,7 @@ public fun get_currrent_value(
  */
  public fun update_pool<T>(storage: &mut MasterChefStorage, clock_object: &Clock) {
   // Save in memory key information before mutating the storage struct
-  let ipx_per_ms = storage.ipx_per_ms;
+  let sip_per_ms = storage.sip_per_ms;
   let total_allocation_points = storage.total_allocation_points;
   let start_timestamp = storage.start_timestamp;
 
@@ -548,7 +609,7 @@ public fun get_currrent_value(
   update_pool_internal(
     pool, 
     clock_object,
-    ipx_per_ms, 
+    sip_per_ms, 
     total_allocation_points, 
     start_timestamp
   );
@@ -557,14 +618,14 @@ public fun get_currrent_value(
  /**
  * @dev The implementation of update_pool
  * @param pool T Pool Struct
- * @param ipx_per_ms Value of Coin<IPX> this module mints per millisecond
+ * @param sip_per_ms Value of Coin<SIP> this module mints per millisecond
  * @param total_allocation_points The sum of all pool points
- * @param start_timestamp The timestamp that this module is allowed to start minting Coin<IPX>
+ * @param start_timestamp The timestamp that this module is allowed to start minting Coin<SIP>
  */
  fun update_pool_internal(
   pool: &mut Pool, 
   clock_object: &Clock,
-  ipx_per_ms: u64, 
+  sip_per_ms: u64, 
   total_allocation_points: u64,
   start_timestamp: u64
   ) {
@@ -580,14 +641,14 @@ public fun get_currrent_value(
   // Update the current pool last reward timestamp
   pool.last_reward_timestamp = current_timestamp;
 
-  // There is nothing to do if the pool is not allowed to mint Coin<IPX> or if there are no coins deposited on it.
+  // There is nothing to do if the pool is not allowed to mint Coin<SIP> or if there are no coins deposited on it.
   if (pool.allocation_points == 0 || pool.balance_value == 0) return;
 
-  // Calculate the rewards (pool_allocation * milliseconds * ipx_per_epoch) / total_allocation_points
-  let rewards = ((pool.allocation_points as u256) * (timestamp_delta as u256) * (ipx_per_ms as u256) / (total_allocation_points as u256));
+  // Calculate the rewards (pool_allocation * milliseconds * sip_per_epoch) / total_allocation_points
+  let rewards = ((pool.allocation_points as u256) * (timestamp_delta as u256) * (sip_per_ms as u256) / (total_allocation_points as u256));
 
-  // Update the accrued_ipx_per_share
-  pool.accrued_ipx_per_share = pool.accrued_ipx_per_share + if (pool.pool_key == IPX_POOL_KEY) {
+  // Update the accrued_sip_per_share
+  pool.accrued_sip_per_share = pool.accrued_sip_per_share + if (pool.pool_key == SIP_POOL_KEY) {
     fdiv_u256(rewards, (pool.balance_value as u256))
   } else {
     (rewards / (pool.balance_value as u256))
@@ -595,34 +656,34 @@ public fun get_currrent_value(
  }
 
  /**
- * @dev The updates the allocation points of the IPX Pool and the total allocation points
- * The IPX Pool must have 1/3 of all other pools allocations
+ * @dev The updates the allocation points of the SIP Pool and the total allocation points
+ * The SIP Pool must have 1/3 of all other pools allocations
  * @param storage The MasterChefStorage shared object
  */
- fun update_ipx_pool(storage: &mut MasterChefStorage) {
+ fun update_sip_pool(storage: &mut MasterChefStorage) {
     // Save the total allocation points in memory
     let total_allocation_points = storage.total_allocation_points;
 
-    // Borrow the IPX muobject_table pool struct
-    let pool = borrow_mut_pool<IPX>(storage);
+    // Borrow the SIP muobject_table pool struct
+    let pool = borrow_mut_pool<SIP>(storage);
 
     // Get points of all other pools
     let all_other_pools_points = total_allocation_points - pool.allocation_points;
 
-    // Divide by 3 to get the new ipx pool allocation
-    let new_ipx_pool_allocation_points = all_other_pools_points / 3;
+    // Divide by 3 to get the new sip pool allocation
+    let new_sip_pool_allocation_points = all_other_pools_points / 3;
 
     // Calculate the total allocation points
-    let total_allocation_points = total_allocation_points + new_ipx_pool_allocation_points - pool.allocation_points;
+    let total_allocation_points = total_allocation_points + new_sip_pool_allocation_points - pool.allocation_points;
 
     // Update pool and storage
-    pool.allocation_points = new_ipx_pool_allocation_points;
+    pool.allocation_points = new_sip_pool_allocation_points;
     storage.total_allocation_points = total_allocation_points;
  } 
 
   /**
   * @dev Finds T Pool from MasterChefStorage
-  * @param storage The IPXStorage shared object
+  * @param storage The SIPStorage shared object
   * @return muobject_table T Pool
   */
  fun borrow_mut_pool<T>(storage: &mut MasterChefStorage): &mut Pool {
@@ -632,7 +693,7 @@ public fun get_currrent_value(
 
 /**
 * @dev Finds T Pool from MasterChefStorage
-* @param storage The IPXStorage shared object
+* @param storage The SIPStorage shared object
 * @return immuobject_table T Pool
 */
 public fun borrow_pool<T>(storage: &MasterChefStorage): &Pool {
@@ -660,6 +721,7 @@ public fun borrow_pool<T>(storage: &MasterChefStorage): &Pool {
   object_bag::borrow(object_table::borrow(&accounts_storage.accounts, get_pool_key<T>(storage)), sender)
  }
 
+
 /**
 * @dev Finds an Account struct for T Pool
 * @param storage The MasterChefStorage shared object
@@ -681,23 +743,37 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
   object_bag::borrow_mut(object_table::borrow_mut(&mut accounts_storage.accounts, key), sender)
  }
 
+ /**
+* @dev Update accont balance
+* @param storage The MasterChefStorage shared object
+* @param accounts_storage The AccountStorage shared object
+* @param sender The address of the account we wish to find
+* @return immuobject_table AccountStruct of sender for T Pool
+*/ 
+ fun update_account_referral<T>(accounts_storage: &mut AccountStorage, key: u64, sender: address,added_amount:u64) {
+  let account:&mut Account = object_bag::borrow_mut(object_table::borrow_mut(&mut accounts_storage.accounts, key), sender);
+  account.referral_reward = account.referral_reward + added_amount;
+  account.unclaimed_reward = account.unclaimed_reward + added_amount;
+  account.users = account.users + 1;
+ }
+
 /**
-* @dev Updates the value of Coin<IPX> this module is allowed to mint per millisecond
+* @dev Updates the value of Coin<SIP> this module is allowed to mint per millisecond
 * @param _ the admin cap
 * @param storage The MasterChefStorage shared object
-* @param ipx_per_ms the new ipx_per_ms
+* @param sip_per_ms the new sip_per_ms
 * Requirements: 
 * - The caller must be the admin
 */ 
- entry public fun update_ipx_per_ms(
+ entry public fun update_sip_per_ms(
   _: &MasterChefAdmin,
   storage: &mut MasterChefStorage,
   clock_object: &Clock,
-  ipx_per_ms: u64
+  sip_per_ms: u64
   ) {
-    // Update all pools rewards info before updating the ipx_per_epoch
+    // Update all pools rewards info before updating the sip_per_epoch
     update_all_pools(storage, clock_object);
-    storage.ipx_per_ms = ipx_per_ms;
+    storage.sip_per_ms = sip_per_ms;
  }
 
 /**
@@ -755,7 +831,7 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
   // Save the current_epoch in memory
   let current_timestamp = clock::timestamp_ms(clock_object);
 
-  // Register the Pool in IPXStorage
+  // Register the Pool in SIPStorage
   object_table::add(
     &mut storage.pools,
     key,
@@ -763,7 +839,7 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
       id: object::new(ctx),
       allocation_points,
       last_reward_timestamp: if (current_timestamp > start_timestamp) { current_timestamp } else { start_timestamp },
-      accrued_ipx_per_share: 0,
+      accrued_sip_per_share: 0,
       balance_value: 0,
       pool_key: key
     }
@@ -777,8 +853,8 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
     }
   );
 
-  // Update the IPX Pool allocation
-  update_ipx_pool(storage);
+  // Update the SIP Pool allocation
+  update_sip_pool(storage);
  }
 
 /**
@@ -825,13 +901,13 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
     }
   );
 
-  // Update the IPX Pool allocation points
-  update_ipx_pool(storage);
+  // Update the SIP Pool allocation points
+  update_sip_pool(storage);
  }
  
  /**
  * @notice It allows the admin to transfer the AdminCap to a new address
- * @param admin The IPXAdmin Struct
+ * @param admin The SIPAdmin Struct
  * @param recipient The address of the new admin
  */
  entry public fun transfer_admin(
@@ -853,14 +929,27 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
     let account = object_bag::borrow<address, Account>(object_table::borrow(&accounts_storage.accounts, get_pool_key<SUI>(storage)), sender);
     (
       account.balance,
-      account.rewards_paid
+      account.rewards_paid,
     )
   }
+
+
+public fun get_account_detail(storage: &MasterChefStorage, accounts_storage: &AccountStorage, sender: address): (u64, u256,u64,u64,u64) {
+    let account = object_bag::borrow<address, Account>(object_table::borrow(&accounts_storage.accounts, get_pool_key<SUI>(storage)), sender);
+    (
+      account.balance,
+      account.rewards_paid,
+      account.users,
+      account.referral_reward,
+      account.unclaimed_reward
+    )
+  }
+
 
 /**
  * @notice A getter function
  * @param storage The MasterChefStorage shared object
- * @return allocation_points, last_reward_timestamp, accrued_ipx_per_share, balance_value of T Pool
+ * @return allocation_points, last_reward_timestamp, accrued_sip_per_share, balance_value of T Pool
  */
   public fun get_pool_info<T>(storage: &MasterChefStorage): (u64, u64, u256, u64) {
     let key = get_pool_key<T>(storage);
@@ -868,7 +957,7 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
     (
       pool.allocation_points,
       pool.last_reward_timestamp,
-      pool.accrued_ipx_per_share,
+      pool.accrued_sip_per_share,
       pool.balance_value
     )
   }
@@ -876,11 +965,11 @@ fun borrow_mut_account<T>(accounts_storage: &mut AccountStorage, key: u64, sende
   /**
  * @notice A getter function
  * @param storage The MasterChefStorage shared object
- * @return total ipx_per_ms, total_allocation_points, start_timestamp
+ * @return total sip_per_ms, total_allocation_points, start_timestamp
  */
   public fun get_master_chef_storage_info(storage: &MasterChefStorage): (u64, u64, u64) {
     (
-      storage.ipx_per_ms,
+      storage.sip_per_ms,
       storage.total_allocation_points,
       storage.start_timestamp
     )

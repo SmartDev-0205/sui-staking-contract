@@ -1,5 +1,5 @@
 // Set of common utility functions for Interest Protocol packages
-module interest_protocol::utils {
+module liquidify_protocol::utils {
     use std::type_name;
     use std::ascii::{Self, String};
     use std::vector;
@@ -8,7 +8,7 @@ module interest_protocol::utils {
     use sui::tx_context::{Self, TxContext};
     use sui::pay;
 
-    use interest_protocol::comparator;
+    use liquidify_protocol::comparator;
 
     const MS_PER_YEAR: u64 = 31536000000; 
     const EQUAL: u8 = 0;

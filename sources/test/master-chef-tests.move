@@ -4,8 +4,9 @@ module interest_protocol::master_chef_tests {
   use sui::test_scenario::{Self as test, Scenario, next_tx, ctx};
   use sui::coin::{mint_for_testing as mint,  burn_for_testing as burn};
   use sui::clock;
+  use sui::sui::SUI;
 
-  use interest_protocol::master_chef::{Self, MasterChefStorage, AccountStorage, MasterChefAdmin};
+  use interest_protocol::master_chef::{Self, MasterChefStorage, AccountStorage, MasterChefAdmin,MasterChefBalanceStorage};
   use interest_protocol::ipx::{Self, IPXStorage, IPX, IPXAdminCap};
   use interest_protocol::test_utils::{people, scenario};
   
@@ -26,20 +27,21 @@ module interest_protocol::master_chef_tests {
       let master_chef_storage = test::take_shared<MasterChefStorage>(test);
       let account_storage = test::take_shared<AccountStorage>(test);
       let ipx_storage = test::take_shared<IPXStorage>(test);
+      let master_chef_balance = test::take_shared<MasterChefBalanceStorage>(test);
 
       let coin_ipx = master_chef::stake(
         &mut master_chef_storage, 
         &mut account_storage,
         &mut ipx_storage,
+        &mut master_chef_balance,
         &clock_object,
-        mint<LPCoin>(500, ctx(test)), 
+        mint<SUI>(500, ctx(test)), 
         ctx(test)
       );
 
       let (_, _, _, balance) = master_chef::get_pool_info<LPCoin>(&master_chef_storage);
       let (user_balance, rewards_paid) = master_chef::get_account_info<LPCoin>(&master_chef_storage, &account_storage, alice);
 
-      assert!(burn(coin_ipx) == 0, 0);
       assert!(balance == 500, 0);
       assert!(user_balance == 500, 0);
       assert!(rewards_paid == 0, 0);

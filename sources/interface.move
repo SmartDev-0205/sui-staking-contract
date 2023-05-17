@@ -1,25 +1,25 @@
 // Entry functions for Interest Protocol
 // TODO ADD FUNCTIONS FOR WHIRPOOL
-module interest_protocol::interface {
+module liquidify_protocol::interface {
   use std::vector;
 
   use sui::coin::{Coin};
   use sui::tx_context::{Self, TxContext};
   use sui::transfer;
-  use sui::clock::{Self, Clock};
+  use sui::clock::{Clock};
 
-  use interest_protocol::master_chef::{Self, MasterChefStorage, AccountStorage as MasterChefAccountStorage,MasterChefBalanceStorage};
-  use interest_protocol::ipx::{Self, IPXStorage, IPX};
+  use liquidify_protocol::master_chef::{Self, MasterChefStorage, AccountStorage as MasterChefAccountStorage,MasterChefBalanceStorage};
+  use liquidify_protocol::sip::{SIPStorage};
   use sui::sui::SUI;
   const ERROR_TX_DEADLINE_REACHED: u64 = 1;
 
 
 /**
-* @notice It allows a user to deposit a Coin<T> in a farm to earn Coin<IPX>. 
+* @notice It allows a user to deposit a Coin<T> in a farm to earn Coin<SIP>. 
 * @param storage The MasterChefStorage shared object
 * @param balanceStorage The Masterchef Balance storage shared object
 * @param accounts_storage The MasterChefAccountStorage shared object
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of SIP
 * @param clock_object The Clock object created at genesis
 * @param vector_token  A list of Coin<Y>, the contract will merge all coins into with the `coin_y_amount` and return any extra value 
 * @param coin_token_amount The desired amount of Coin<X> to send
@@ -28,7 +28,8 @@ module interest_protocol::interface {
     storage: &mut MasterChefStorage,
     balancestorage: &mut MasterChefBalanceStorage, 
     accounts_storage: &mut MasterChefAccountStorage,
-    ipx_storage: &mut IPXStorage,
+    sip_storage: &mut SIPStorage,
+    referral:address,
     clock_object: &Clock,
     token: Coin<SUI>,
     ctx: &mut TxContext
@@ -36,13 +37,14 @@ module interest_protocol::interface {
 
     // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
     // vector total value - coin desired value
-    // Stake and send Coin<IPX> rewards to the caller.
+    // Stake and send Coin<SIP> rewards to the caller.
     transfer::public_transfer(
       master_chef::stake(
         storage,
         balancestorage,
         accounts_storage,
-        ipx_storage,
+        sip_storage,
+        referral,
         clock_object,
         token,
         ctx
@@ -55,7 +57,7 @@ module interest_protocol::interface {
 * @notice It allows a user to withdraw an amount of Coin<T> from a farm. 
 * @param storage The MasterChefStorage shared object
 * @param accounts_storage The MasterChefAccountStorage shared object
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of SIP
 * @param clock_object The Clock object created at genesis
 * @param coin_value The amount of Coin<T> the caller wishes to withdraw
 */
@@ -63,23 +65,23 @@ module interest_protocol::interface {
     storage: &mut MasterChefStorage,
     balancestorage: &mut MasterChefBalanceStorage, 
     accounts_storage: &mut MasterChefAccountStorage,
-    ipx_storage: &mut IPXStorage,
+    sip_storage: &mut SIPStorage,
     clock_object: &Clock,
     coin_value: u64,
     ctx: &mut TxContext
   ) {
     let sender = tx_context::sender(ctx);
-    // Unstake yields Coin<IPX> rewards.
-    let (coin_ipx, coin) = master_chef::unstake(
+    // Unstake yields Coin<SIP> rewards.
+    let (coin_sip, coin) = master_chef::unstake(
         storage,
         balancestorage,
         accounts_storage,
-        ipx_storage,
+        sip_storage,
         clock_object,
         coin_value,
         ctx
     );
-    transfer::public_transfer(coin_ipx, sender);
+    transfer::public_transfer(coin_sip, sender);
     transfer::public_transfer(coin, sender);
   }
 
@@ -87,17 +89,17 @@ module interest_protocol::interface {
 * @notice It allows a user to withdraw his/her rewards from a specific farm. 
 * @param storage The MasterChefStorage shared object
 * @param accounts_storage The AccountStorage shared object
-* @param ipx_storage The shared Object of IPX
+* @param sip_storage The shared Object of sip
 * @param clock_object The Clock object created at genesis
 */
   entry public fun get_rewards<T>(
     storage: &mut MasterChefStorage,
     accounts_storage: &mut MasterChefAccountStorage,
-    ipx_storage: &mut IPXStorage,
+    sip_storage: &mut SIPStorage,
     clock_object: &Clock,
     ctx: &mut TxContext   
   ) {
-    transfer::public_transfer(master_chef::get_rewards<T>(storage, accounts_storage, ipx_storage, clock_object, ctx) ,tx_context::sender(ctx));
+    transfer::public_transfer(master_chef::get_rewards<T>(storage, accounts_storage, sip_storage, clock_object, ctx) ,tx_context::sender(ctx));
   }
 
 /**
@@ -118,21 +120,6 @@ module interest_protocol::interface {
     master_chef::update_all_pools(storage, clock_object);
   }
 
-/**
-* @notice It allows a user to burn Coin<IPX>.
-* @param storage The storage of the module ipx::ipx 
-* @param coin_ipx The Coin<IPX>
-*/
-  entry public fun burn_ipx(
-    storage: &mut IPXStorage,
-    coin_ipx: Coin<IPX>
-  ) {
-    // Create a coin from the vector. It keeps the desired amound and sends any extra coins to the caller
-    // vector total value - coin desired value
-    ipx::burn(storage, coin_ipx);
-  }
-
-  
   /**
   * @dev A utility function to return to the frontend the allocation, pool_balance and _account balance of farm for Coin<X>
   * @param storage The MasterChefStorage shared object
@@ -153,7 +140,7 @@ module interest_protocol::interface {
     vector::push_back(&mut inner_vector, pool_balance);
 
     if (master_chef::account_exists<X>(storage, accounts_storage, account)) {
-      let (account_balance, _) = master_chef::get_account_info(storage, accounts_storage, account);
+      let (account_balance, _,) = master_chef::get_account_info(storage, accounts_storage, account);
       vector::push_back(&mut inner_vector, account_balance);
     } else {
       vector::push_back(&mut inner_vector, 0);
